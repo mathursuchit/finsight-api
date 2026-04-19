@@ -1,0 +1,72 @@
+services:
+
+  # ── API Server ──────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finsight-api
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL_NAME=${MODEL_NAME:-microsoft/phi-3-mini-4k-instruct}
+      - ADAPTER_PATH=${ADAPTER_PATH:-}
+      - LOAD_IN_4BIT=${LOAD_IN_4BIT:-false}
+      - MAX_NEW_TOKENS=${MAX_NEW_TOKENS:-512}
+      - TEMPERATURE=${TEMPERATURE:-0.3}
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - hf_cache:/app/.cache/huggingface
+      - ./models:/app/models:ro  # mount fine-tuned adapters
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    restart: unless-stopped
+    # Uncomment for GPU support (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ── Streamlit Demo UI ────────────────────────────────────────
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: finsight-demo
+    ports:
+      - "8501:8501"
+    environment:
+      - FINSIGHT_API_URL=http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ── MLflow Tracking Server ───────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.12.1
+    container_name: finsight-mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  hf_cache:
+  mlflow_data:

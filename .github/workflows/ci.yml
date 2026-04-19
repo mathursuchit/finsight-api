@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov httpx
+
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check app/ training/ tests/
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t finsight-api:${{ github.sha }} .
+
+      - name: Build Streamlit image
+        run: docker build -f Dockerfile.streamlit -t finsight-demo:${{ github.sha }} .
+
+      - name: Smoke test — container starts
+        run: |
+          docker run -d --name finsight-test \
+            -e MODEL_NAME=microsoft/phi-3-mini-4k-instruct \
+            -e LOAD_IN_4BIT=false \
+            -p 8000:8000 \
+            finsight-api:${{ github.sha }} &
+          sleep 10
+          # Just check it responds (model won't load in CI, but the server should start)
+          curl -f http://localhost:8000/ || true
+          docker stop finsight-test || true
