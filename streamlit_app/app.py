@@ -12,7 +12,7 @@ import time
 import streamlit as st
 from huggingface_hub import InferenceClient
 
-MODEL = "microsoft/Phi-3-mini-4k-instruct"
+MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
 
 SYSTEM_PROMPT = """You are FinSight, an expert financial analyst AI. You provide clear,
 accurate analysis on topics including credit risk, equity valuation, financial statements,
@@ -53,7 +53,7 @@ with st.sidebar:
     max_tokens = st.slider("Max tokens", 64, 1024, 512, 64)
 
     st.divider()
-    st.markdown(f"**Model:** `{MODEL.split('/')[-1]}`")
+    st.markdown(f"**Model:** `Mistral-7B-Instruct`")
     st.markdown("**Fine-tuning:** QLoRA (LoRA adapters)")
     st.markdown("**Stack:** FastAPI · Docker · MLflow")
     st.divider()
