@@ -1,75 +1,85 @@
 # FinSight API
 
-Financial analysis LLM — fine-tuned with QLoRA on financial QA, served via FastAPI + Docker.
+A financial analysis API built to explore what it takes to go from a raw LLM to a production-ready service. The project covers fine-tuning with QLoRA, serving with FastAPI, containerizing with Docker, and tracking experiments with MLflow.
 
-## Stack
+**Live demo:** [mathursuchit-finsight-api.streamlit.app](https://mathursuchit-finsight-api.streamlit.app)
 
-| Layer | Tech |
-|-------|------|
-| Base model | Phi-3-mini-4k-instruct (or Llama-3.2-3B) |
-| Fine-tuning | QLoRA (4-bit) via HuggingFace PEFT |
-| API | FastAPI + streaming SSE |
-| Containerization | Docker + Docker Compose |
-| Experiment tracking | MLflow |
-| Demo UI | Streamlit |
-| CI | GitHub Actions |
+## Why I built this
 
-## Quick Start
+I wanted to go deeper than just calling an API. Most LLM demos stop at prompt engineering. I wanted to understand the full stack: how fine-tuning actually works, what it costs in compute, how much perplexity actually drops, and what it takes to serve a model reliably behind a REST API.
 
-```bash
-# 1. Clone and configure
-cp .env.example .env
+The financial domain made sense because I work with credit and banking data professionally. It also gave me a natural eval set: if the model can explain DCF valuation or debt covenants correctly, it's actually learning domain knowledge, not just pattern-matching.
 
-# 2. Run everything
-docker compose up
+## What it does
 
-# API:      http://localhost:8000
-# Swagger:  http://localhost:8000/docs
-# Demo:     http://localhost:8501
-# MLflow:   http://localhost:5000
+Takes financial questions through a chat interface and returns grounded, specific answers. The model is fine-tuned on financial Q&A data using QLoRA, which keeps GPU memory requirements low enough to run on a single consumer GPU or a free Colab instance.
+
+The fine-tuning pipeline logs perplexity before and after training to MLflow so the improvement is measurable, not just qualitative.
+
+## Architecture
+
+```
+Training:
+  Financial Q&A dataset (Reddit finance + curated pairs)
+      |
+      v
+  QLoRA fine-tuning (4-bit quantization, LoRA adapters)
+      |
+      v
+  LoRA adapter saved → loaded at inference time
+
+Serving:
+  FastAPI app
+      |
+      ├── POST /api/v1/chat  (sync + streaming SSE)
+      └── GET  /health
+
+  Docker Compose
+      ├── api       (FastAPI + model)
+      ├── demo      (Streamlit UI)
+      └── mlflow    (experiment tracking)
 ```
 
 ## Fine-tuning
 
+Requires a GPU. Runs on a free Colab T4 for smaller models.
+
 ```bash
-# Install training deps
 pip install -r requirements-training.txt
 
-# Prepare dataset + fine-tune (GPU recommended)
+# Prepare dataset and train
 python -m training.train --model microsoft/phi-3-mini-4k-instruct --epochs 3
 
-# Evaluate: base vs fine-tuned
+# Compare base vs fine-tuned
 python -m training.evaluate --adapter_path models/finsight-adapter
+```
 
-# Serve the adapter
-echo "ADAPTER_PATH=models/finsight-adapter" >> .env
+The evaluate script prints a side-by-side table: perplexity, ROUGE-L, and latency per token for both the base model and the fine-tuned adapter.
+
+## Run locally
+
+```bash
+cp .env.example .env
 docker compose up
 ```
 
-## API Usage
+API and Swagger docs at `http://localhost:8000/docs`  
+Streamlit demo at `http://localhost:8501`  
+MLflow at `http://localhost:5000`
+
+## API
 
 ```bash
-# Health check
-curl http://localhost:8000/health
-
-# Synchronous chat
+# Sync
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "What is a P/E ratio?"}], "stream": false}'
+  -d '{"messages": [{"role": "user", "content": "What is a P/E ratio?"}]}'
 
-# Streaming chat
+# Streaming
 curl -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"messages": [{"role": "user", "content": "Explain EBITDA"}], "stream": true}'
 ```
-
-## Metrics (example — after fine-tuning on financial QA)
-
-| Metric | Base | Fine-tuned |
-|--------|------|------------|
-| Perplexity | ~18.4 | ~11.2 |
-| ROUGE-L | 0.31 | 0.47 |
-| Perplexity reduction | — | ~39% |
 
 ## Tests
 
@@ -78,25 +88,12 @@ pip install pytest httpx
 pytest tests/ -v
 ```
 
-## Project Structure
+12 tests covering request validation, sync and streaming responses, edge cases. Model is mocked so no GPU needed to run tests.
 
-```
-finsight-api/
-├── app/
-│   ├── main.py          # FastAPI app + endpoints
-│   ├── inference.py     # Model loading + generation
-│   ├── models.py        # Pydantic request/response schemas
-│   └── config.py        # Settings via pydantic-settings
-├── training/
-│   ├── train.py         # QLoRA fine-tuning
-│   ├── dataset.py       # Dataset prep (Reddit finance + synthetic)
-│   └── evaluate.py      # Before/after metrics
-├── streamlit_app/
-│   └── app.py           # Demo UI
-├── tests/
-│   └── test_api.py      # API tests (mocked model)
-├── Dockerfile           # API image
-├── Dockerfile.training  # Training image (CUDA)
-├── Dockerfile.streamlit # Demo image
-└── docker-compose.yml   # All services
-```
+## Stack
+
+Python · FastAPI · HuggingFace Transformers · PEFT · QLoRA · Docker · MLflow · Streamlit · Groq · pytest · GitHub Actions
+
+## Author
+
+Suchit Mathur — [LinkedIn](https://www.linkedin.com/in/mathursuchit/) · [GitHub](https://github.com/mathursuchit)
