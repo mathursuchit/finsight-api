@@ -12,7 +12,7 @@ import time
 import streamlit as st
 from huggingface_hub import InferenceClient
 
-MODEL = "mistralai/Mistral-7B-Instruct-v0.3"
+MODEL = "HuggingFaceH4/zephyr-7b-beta"
 
 SYSTEM_PROMPT = """You are FinSight, an expert financial analyst AI. You provide clear,
 accurate analysis on topics including credit risk, equity valuation, financial statements,
@@ -53,7 +53,7 @@ with st.sidebar:
     max_tokens = st.slider("Max tokens", 64, 1024, 512, 64)
 
     st.divider()
-    st.markdown(f"**Model:** `Mistral-7B-Instruct`")
+    st.markdown(f"**Model:** `Zephyr-7B-beta`")
     st.markdown("**Fine-tuning:** QLoRA (LoRA adapters)")
     st.markdown("**Stack:** FastAPI · Docker · MLflow")
     st.divider()
@@ -102,20 +102,29 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
 
         try:
             client = get_client()
-            stream = client.chat.completions.create(
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
+            # Format prompt using Zephyr chat template
+            prompt = f"<|system|>\n{SYSTEM_PROMPT}</s>\n"
+            for m in st.session_state.messages:
+                if m["role"] == "user":
+                    prompt += f"<|user|>\n{m['content']}</s>\n"
+                elif m["role"] == "assistant":
+                    prompt += f"<|assistant|>\n{m['content']}</s>\n"
+            prompt += "<|assistant|>\n"
+
+            stream = client.text_generation(
+                prompt,
+                max_new_tokens=max_tokens,
+                temperature=max(temperature, 0.05),
                 stream=True,
+                stop_sequences=["</s>", "<|user|>"],
             )
             for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
-                full_response += delta
+                full_response += chunk
                 placeholder.markdown(full_response + "▌")
 
             elapsed = time.perf_counter() - start
             placeholder.markdown(full_response)
-            st.caption(f"Generated in {elapsed:.1f}s · {MODEL.split('/')[-1]}")
+            st.caption(f"Generated in {elapsed:.1f}s · Zephyr-7B-beta")
 
         except Exception as e:
             err = str(e)
