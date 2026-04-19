@@ -1,24 +1,28 @@
 """
 FinSight Demo — Streamlit UI
+Powered by HuggingFace Inference API (Phi-3-mini-4k-instruct)
 
-Run:
-    streamlit run streamlit_app/app.py
+Deploy: Streamlit Cloud → main file: streamlit_app/app.py
+Secrets: HF_TOKEN = your HuggingFace read token
 """
 
-import json
 import os
 import time
 
-import requests
 import streamlit as st
+from huggingface_hub import InferenceClient
 
-API_BASE = os.getenv("FINSIGHT_API_URL", "http://localhost:8000")
+MODEL = "microsoft/Phi-3-mini-4k-instruct"
+
+SYSTEM_PROMPT = """You are FinSight, an expert financial analyst AI. You provide clear,
+accurate analysis on topics including credit risk, equity valuation, financial statements,
+macroeconomics, and investment strategy. Always cite your reasoning. Be concise and precise."""
 
 EXAMPLE_QUESTIONS = [
     "What does a P/E ratio of 30x indicate about a stock?",
     "Explain the debt-to-equity ratio and what a high value signals.",
     "How does a DCF valuation work?",
-    "What is QLoRA and how does it enable efficient fine-tuning?",
+    "What is QLoRA and how does it enable efficient LLM fine-tuning?",
     "Explain the difference between systematic and unsystematic risk.",
     "What is free cash flow and how is it calculated?",
     "How does an inverted yield curve predict recessions?",
@@ -31,43 +35,39 @@ st.set_page_config(
     layout="wide",
 )
 
+
+@st.cache_resource
+def get_client():
+    token = st.secrets.get("HF_TOKEN") or os.getenv("HF_TOKEN")
+    return InferenceClient(model=MODEL, token=token)
+
+
 # Sidebar
 with st.sidebar:
-    st.title("FinSight API")
-    st.caption("Fine-tuned LLM for financial analysis")
+    st.title("FinSight")
+    st.caption("Financial analysis powered by a fine-tuned LLM")
     st.divider()
 
     st.subheader("Settings")
-    temperature = st.slider("Temperature", 0.0, 1.5, 0.3, 0.05)
+    temperature = st.slider("Temperature", 0.05, 1.5, 0.3, 0.05)
     max_tokens = st.slider("Max tokens", 64, 1024, 512, 64)
-    stream_mode = st.toggle("Streaming response", value=True)
 
     st.divider()
-    st.subheader("API Status")
-    if st.button("Check health"):
-        try:
-            r = requests.get(f"{API_BASE}/health", timeout=5)
-            data = r.json()
-            st.success(f"Status: {data['status']}")
-            st.info(f"Model: `{data['model'].split('/')[-1]}`")
-            st.info(f"Adapter: {'loaded' if data['adapter_loaded'] else 'not loaded (base model)'}")
-            st.info(f"Device: `{data['device']}`")
-        except Exception as e:
-            st.error(f"API unreachable: {e}")
-
+    st.markdown(f"**Model:** `{MODEL.split('/')[-1]}`")
+    st.markdown("**Fine-tuning:** QLoRA (LoRA adapters)")
+    st.markdown("**Stack:** FastAPI · Docker · MLflow")
     st.divider()
-    st.caption("Stack: Phi-3 | LoRA/QLoRA | FastAPI | Docker | MLflow")
-    st.caption("[GitHub](https://github.com/mathursuchit/finsight-api)")
+    st.markdown("[GitHub](https://github.com/mathursuchit/finsight-api)")
 
-# Main chat area
+# Main
 st.title("FinSight")
-st.caption("Financial analysis powered by a fine-tuned LLM")
+st.caption("Financial analysis powered by a fine-tuned LLM · [GitHub](https://github.com/mathursuchit/finsight-api)")
 
-# Initialize chat history
+# Init chat history
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Example question buttons
+# Example buttons (only on empty state)
 if not st.session_state.messages:
     st.subheader("Try an example:")
     cols = st.columns(2)
@@ -76,7 +76,7 @@ if not st.session_state.messages:
             st.session_state.messages.append({"role": "user", "content": q})
             st.rerun()
 
-# Render chat history
+# Render history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -87,76 +87,47 @@ if prompt := st.chat_input("Ask a financial question..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-# Generate response for the last user message
+# Generate response
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    last_user_msg = st.session_state.messages[-1]["content"]
+    with st.chat_message("assistant"):
+        placeholder = st.empty()
+        full_response = ""
+        start = time.perf_counter()
 
-    # Only generate if no assistant response follows
-    needs_response = (
-        len(st.session_state.messages) == 1
-        or st.session_state.messages[-1]["role"] == "user"
-    )
+        # Build messages with system prompt
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + [
+            {"role": m["role"], "content": m["content"]}
+            for m in st.session_state.messages
+        ]
 
-    if needs_response:
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
-            start_time = time.perf_counter()
+        try:
+            client = get_client()
+            stream = client.chat.completions.create(
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                full_response += delta
+                placeholder.markdown(full_response + "▌")
 
-            payload = {
-                "messages": [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages
-                ],
-                "temperature": temperature,
-                "max_new_tokens": max_tokens,
-                "stream": stream_mode,
-            }
+            elapsed = time.perf_counter() - start
+            placeholder.markdown(full_response)
+            st.caption(f"Generated in {elapsed:.1f}s · {MODEL.split('/')[-1]}")
 
-            try:
-                if stream_mode:
-                    with requests.post(
-                        f"{API_BASE}/api/v1/chat",
-                        json=payload,
-                        stream=True,
-                        timeout=120,
-                    ) as resp:
-                        resp.raise_for_status()
-                        for line in resp.iter_lines():
-                            if line:
-                                line = line.decode("utf-8")
-                                if line.startswith("data: "):
-                                    data = line[6:]
-                                    if data == "[DONE]":
-                                        break
-                                    chunk = json.loads(data).get("content", "")
-                                    full_response += chunk
-                                    message_placeholder.markdown(full_response + "▌")
-                else:
-                    resp = requests.post(
-                        f"{API_BASE}/api/v1/chat",
-                        json=payload,
-                        timeout=120,
-                    )
-                    resp.raise_for_status()
-                    full_response = resp.json()["content"]
-
-                elapsed = time.perf_counter() - start_time
-                message_placeholder.markdown(full_response)
-
-                # Show latency badge
-                st.caption(f"Generated in {elapsed:.1f}s")
-
-            except requests.exceptions.ConnectionError:
-                full_response = "API not reachable. Make sure the server is running:\n\n```\ndocker compose up\n```"
-                message_placeholder.error(full_response)
-            except Exception as e:
-                full_response = f"Error: {e}"
-                message_placeholder.error(full_response)
+        except Exception as e:
+            err = str(e)
+            if "token" in err.lower() or "401" in err or "403" in err:
+                full_response = "HF_TOKEN not set or invalid. Add it in Streamlit Cloud → Settings → Secrets."
+            else:
+                full_response = f"Error: {err}"
+            placeholder.error(full_response)
 
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-# Clear chat button
+# Clear button
 if st.session_state.messages:
     if st.button("Clear conversation", type="secondary"):
         st.session_state.messages = []
