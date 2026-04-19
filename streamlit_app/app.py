@@ -1,18 +1,18 @@
 """
 FinSight Demo — Streamlit UI
-Powered by HuggingFace Inference API (Phi-3-mini-4k-instruct)
+Powered by Groq Inference API (Llama-3.3-70B)
 
 Deploy: Streamlit Cloud → main file: streamlit_app/app.py
-Secrets: HF_TOKEN = your HuggingFace read token
+Secrets: GROQ_API_KEY = your Groq API key (console.groq.com)
 """
 
 import os
 import time
 
 import streamlit as st
-from huggingface_hub import InferenceClient
+from groq import Groq
 
-MODEL = "HuggingFaceH4/zephyr-7b-beta"
+MODEL = "llama-3.3-70b-versatile"
 
 SYSTEM_PROMPT = """You are FinSight, an expert financial analyst AI. You provide clear,
 accurate analysis on topics including credit risk, equity valuation, financial statements,
@@ -38,8 +38,8 @@ st.set_page_config(
 
 @st.cache_resource
 def get_client():
-    token = st.secrets.get("HF_TOKEN") or os.getenv("HF_TOKEN")
-    return InferenceClient(model=MODEL, token=token)
+    api_key = st.secrets.get("GROQ_API_KEY") or os.getenv("GROQ_API_KEY")
+    return Groq(api_key=api_key)
 
 
 # Sidebar
@@ -53,7 +53,7 @@ with st.sidebar:
     max_tokens = st.slider("Max tokens", 64, 1024, 512, 64)
 
     st.divider()
-    st.markdown(f"**Model:** `Zephyr-7B-beta`")
+    st.markdown(f"**Model:** `Llama-3.3-70B`")
     st.markdown("**Fine-tuning:** QLoRA (LoRA adapters)")
     st.markdown("**Stack:** FastAPI · Docker · MLflow")
     st.divider()
@@ -102,34 +102,26 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
 
         try:
             client = get_client()
-            # Format prompt using Zephyr chat template
-            prompt = f"<|system|>\n{SYSTEM_PROMPT}</s>\n"
-            for m in st.session_state.messages:
-                if m["role"] == "user":
-                    prompt += f"<|user|>\n{m['content']}</s>\n"
-                elif m["role"] == "assistant":
-                    prompt += f"<|assistant|>\n{m['content']}</s>\n"
-            prompt += "<|assistant|>\n"
-
-            stream = client.text_generation(
-                prompt,
-                max_new_tokens=max_tokens,
+            stream = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                max_tokens=max_tokens,
                 temperature=max(temperature, 0.05),
                 stream=True,
-                stop_sequences=["</s>", "<|user|>"],
             )
             for chunk in stream:
-                full_response += chunk
+                delta = chunk.choices[0].delta.content or ""
+                full_response += delta
                 placeholder.markdown(full_response + "▌")
 
             elapsed = time.perf_counter() - start
             placeholder.markdown(full_response)
-            st.caption(f"Generated in {elapsed:.1f}s · Zephyr-7B-beta")
+            st.caption(f"Generated in {elapsed:.1f}s · Llama-3.3-70B via Groq")
 
         except Exception as e:
             err = str(e)
-            if "token" in err.lower() or "401" in err or "403" in err:
-                full_response = "HF_TOKEN not set or invalid. Add it in Streamlit Cloud → Settings → Secrets."
+            if "api_key" in err.lower() or "401" in err or "403" in err:
+                full_response = "GROQ_API_KEY not set or invalid. Add it in Streamlit Cloud → Settings → Secrets."
             else:
                 full_response = f"Error: {err}"
             placeholder.error(full_response)
